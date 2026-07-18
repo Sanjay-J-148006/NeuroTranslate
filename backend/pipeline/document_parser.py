@@ -18,8 +18,9 @@ class TextBlock:
     text: str
     block_index: int
     page_number: int = 0
-    block_type: str = "paragraph"   # paragraph / heading / table_cell / caption
+    block_type: str = "paragraph"   # paragraph / heading / table_cell / caption / list_item
     bbox: tuple | None = None        # (x0, y0, x1, y1) from OCR/PDF
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -73,6 +74,7 @@ def parse_pdf(file_path: Path) -> ParsedDocument:
 def parse_docx(file_path: Path) -> ParsedDocument:
     """Extract text blocks from DOCX preserving headings, paragraphs, tables."""
     from docx import Document
+    import re
 
     doc = ParsedDocument(source_path=file_path, file_type="docx")
     docx = Document(str(file_path))
@@ -82,23 +84,34 @@ def parse_docx(file_path: Path) -> ParsedDocument:
         if not text:
             continue
         style_name = para.style.name.lower() if para.style else ""
-        block_type = "heading" if "heading" in style_name else "paragraph"
+        block_type = "paragraph"
+        if "heading" in style_name:
+            block_type = "heading"
+        elif "list" in style_name or "bullet" in style_name or text.startswith(("•", "-", "*")) or re.match(r'^\d+\.', text):
+            block_type = "list_item"
+            
         doc.blocks.append(TextBlock(
             text=text,
             block_index=len(doc.blocks),
             block_type=block_type,
         ))
 
-    # Extract table cells
-    for table in docx.tables:
-        for row in table.rows:
-            for cell in row.cells:
+    # Extract table cells with row/col metadata
+    for table_idx, table in enumerate(docx.tables):
+        for row_idx, row in enumerate(table.rows):
+            for col_idx, cell in enumerate(row.cells):
                 text = cell.text.strip()
                 if text:
                     doc.blocks.append(TextBlock(
                         text=text,
                         block_index=len(doc.blocks),
                         block_type="table_cell",
+                        metadata={
+                            "table_index": table_idx,
+                            "row_index": row_idx,
+                            "col_index": col_idx,
+                            "col_count": len(row.cells)
+                        }
                     ))
 
     app_logger.info(f"DOCX parsed: {len(doc.blocks)} blocks")
@@ -109,6 +122,7 @@ def parse_docx(file_path: Path) -> ParsedDocument:
 
 def parse_text(file_path: Path) -> ParsedDocument:
     """Read plain text or CSV as paragraph blocks."""
+    import re
     doc = ParsedDocument(source_path=file_path, file_type="txt")
 
     content = file_path.read_text(encoding="utf-8", errors="replace")
@@ -117,7 +131,10 @@ def parse_text(file_path: Path) -> ParsedDocument:
         paragraphs = [line.strip() for line in content.splitlines() if line.strip()]
 
     for i, para in enumerate(paragraphs):
-        doc.blocks.append(TextBlock(text=para, block_index=i))
+        block_type = "paragraph"
+        if para.startswith(("•", "-", "*")) or re.match(r'^\d+\.', para):
+            block_type = "list_item"
+        doc.blocks.append(TextBlock(text=para, block_index=i, block_type=block_type))
 
     app_logger.info(f"Text parsed: {len(doc.blocks)} blocks")
     return doc

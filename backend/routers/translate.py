@@ -39,7 +39,7 @@ async def _run_pipeline_background(
 
         # Export files
         from pipeline.export_engine import export_all
-        export_paths = await loop.run_in_executor(None, export_all, job_id, result)
+        export_paths = await loop.run_in_executor(None, export_all, job_id, result, result.get("reconstructed_doc"))
         result["export_pdf_path"]  = export_paths.get("pdf")
         result["export_docx_path"] = export_paths.get("docx")
         result["export_txt_path"]  = export_paths.get("txt")

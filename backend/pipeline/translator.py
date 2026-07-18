@@ -141,6 +141,67 @@ def _estimate_confidence(src: str, tgt: str) -> float:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+def translate_chunks(chunks: list[Any], language: str) -> list[Any]:
+    """
+    Translate a list of TranslationChunks in batch.
+    Keeps track of order and applies script detection to each chunk text.
+    """
+    if not chunks:
+        return []
+
+    # ── Step 1: Bucket chunks by script / model ────────────────────────────
+    ne_idx, ne_txt = [], []
+    si_idx, si_txt = [], []
+    en_idx, en_txt = [], []
+
+    for i, chunk in enumerate(chunks):
+        lang = _detect_sentence_language(chunk.text, language)
+        if lang == "ne":
+            ne_idx.append(i); ne_txt.append(chunk.text)
+        elif lang == "si":
+            si_idx.append(i); si_txt.append(chunk.text)
+        else:
+            en_idx.append(i); en_txt.append(chunk.text)
+
+    # ── Step 2: Translate each bucket sequentially (never load 2 models at once)
+    translated: list[str] = [""] * len(chunks)
+    model_flags: list[str] = []
+
+    if ne_txt:
+        try:
+            if _INDICTRANS_AVAILABLE:
+                app_logger.info(f"Batch-translating {len(ne_txt)} Nepali chunks via IndicTrans2...")
+                ne_out = _translate_batch_indictrans2(ne_txt)
+                model_flags.append("indictrans2")
+            else:
+                app_logger.info(f"Batch-translating {len(ne_txt)} Nepali chunks via NLLB-200...")
+                ne_out = _translate_batch_nllb(ne_txt, "npi_Deva")
+                model_flags.append("nllb-200")
+        except Exception as e:
+            app_logger.exception("Nepali batch translation failed. Falling back to NLLB-200.")
+            ne_out = _translate_batch_nllb(ne_txt, "npi_Deva")
+            model_flags.append("nllb-200(fallback)")
+
+        for i, out in zip(ne_idx, ne_out):
+            translated[i] = out
+
+    if si_txt:
+        app_logger.info(f"Batch-translating {len(si_txt)} Sinhala chunks via NLLB-200...")
+        si_out = _translate_batch_nllb(si_txt, "sin_Sinh")
+        for i, out in zip(si_idx, si_out):
+            translated[i] = out
+        model_flags.append("nllb-200")
+
+    for i, t in zip(en_idx, en_txt):
+        translated[i] = t
+
+    # ── Step 3: Merge back to chunks ──────────────────────────────────────────
+    for chunk, trans in zip(chunks, translated):
+        chunk.translation = trans
+
+    return chunks
+
+
 def translate(text: str, language: str) -> dict:
     """
     Translate text to English.

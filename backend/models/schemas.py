@@ -21,7 +21,8 @@ class NEREntity(BaseModel):
 class GlossaryMatch(BaseModel):
     original_term: str
     replacement: str
-    position: int
+    position: Optional[int] = None
+    occurrences: Optional[int] = None
 
 
 # ── Translation Result ────────────────────────────────────────────────────────

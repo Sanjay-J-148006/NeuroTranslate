@@ -20,15 +20,7 @@ from utils.logger import app_logger
 
 def run_pipeline(file_path: str | Path, file_type: str, enable_ner: bool = True) -> dict:
     """
-    Run the full translation pipeline.
-
-    Args:
-        file_path: Path to the uploaded file
-        file_type: "pdf" / "image" / "docx" / "txt" / "audio" / "video"
-        enable_ner: Whether to run the NER model
-
-    Returns:
-        Full result dict with all pipeline outputs.
+    Run the full translation pipeline with reassembly and fusion.
     """
     start_time = time.time()
     file_path = Path(file_path)
@@ -43,11 +35,17 @@ def run_pipeline(file_path: str | Path, file_type: str, enable_ner: bool = True)
     if file_type in ("audio", "video"):
         # Route to ASR engine — it returns text + language
         from pipeline.asr_engine import process_audio
+        from pipeline.document_parser import ParsedDocument, TextBlock
+        
         asr_result = process_audio(file_path, file_type)
         source_text = asr_result["text"]
         detected_language_from_asr = asr_result.get("language")
         asr_language_confidence = asr_result.get("language_probability", 0.0)
         app_logger.info(f"ASR: '{detected_language_from_asr}' ({asr_language_confidence:.2f}), {len(source_text)} chars")
+        
+        # Create a mock ParsedDocument for the ASR text
+        parsed = ParsedDocument(source_path=file_path, file_type=file_type)
+        parsed.blocks.append(TextBlock(text=source_text, block_index=0, block_type="paragraph"))
     else:
         # Parse document
         from pipeline.document_parser import parse_document
@@ -58,7 +56,7 @@ def run_pipeline(file_path: str | Path, file_type: str, enable_ner: bool = True)
             from pipeline.ocr_engine import apply_ocr_to_document
             parsed = apply_ocr_to_document(parsed)
 
-        source_text = "\n\n".join(b.text for b in parsed.blocks if b.text.strip())
+    source_text = "\n\n".join(b.text for b in parsed.blocks if b.text.strip())
 
     if not source_text.strip():
         return {
@@ -82,20 +80,61 @@ def run_pipeline(file_path: str | Path, file_type: str, enable_ner: bool = True)
 
     app_logger.info(f"Language: {detected_language} (conf={language_confidence:.3f})")
 
-    # ── Stage 4: Translation ──────────────────────────────────────────────────
-    from pipeline.translator import translate
-    translation_result = translate(source_text, detected_language)
-    translated_text      = translation_result["translated_text"]
-    model_used           = translation_result["model_used"]
-    translation_confidence = translation_result["translation_confidence"]
-    sentence_pairs       = translation_result.get("sentence_pairs", [])
-
-    # ── Stage 5: Glossary ─────────────────────────────────────────────────────
+    # ── Stage 4: Translation & Reassembly ─────────────────────────────────────
+    from pipeline.reassembly import assign_metadata, merge_translation_with_metadata, reconstruct_document
+    from pipeline.translator import translate_chunks
+    
+    # 1. Assign metadata (sentence splitting + structural block tagging)
+    chunks = assign_metadata(parsed)
+    
+    # 2. Batch translation of chunks
+    chunks = translate_chunks(chunks, detected_language)
+    
+    # 3. Glossary enforcement at chunk level
     from pipeline.glossary_engine import apply_glossary, get_glossary_preservation_rate
-    translated_text, glossary_matches = apply_glossary(translated_text, detected_language)
+    glossary_matches = []
+    for chunk in chunks:
+        if chunk.translation:
+            chunk.translation, chunk_matches = apply_glossary(chunk.translation, detected_language)
+            glossary_matches.extend(chunk_matches)
+            
     glossary_preservation_rate = get_glossary_preservation_rate(
-        glossary_matches, len(source_text.split("\n\n"))
+        glossary_matches, len(parsed.blocks)
     )
+    
+    # 4. Reconstruct document
+    reconstructed_doc = reconstruct_document(chunks)
+    
+    # 5. Extract flat outputs for legacy confidence/metadata metrics
+    translated_text = "\n\n".join(p.translated_text for p in reconstructed_doc.all_paragraphs)
+    
+    # Calculate translation models used and confidence score
+    from pipeline.translator import _estimate_confidence
+    translation_confidence = _estimate_confidence(source_text, translated_text)
+    
+    # Extract unique models used based on sentence detection
+    model_flags = []
+    for chunk in chunks:
+        from pipeline.translator import _detect_sentence_language, _INDICTRANS_AVAILABLE
+        lang = _detect_sentence_language(chunk.text, detected_language)
+        if lang == "ne":
+            model_flags.append("indictrans2" if _INDICTRANS_AVAILABLE else "nllb-200")
+        elif lang == "si":
+            model_flags.append("nllb-200")
+        else:
+            model_flags.append("passthrough")
+    model_used = "+".join(dict.fromkeys(model_flags))
+    
+    # Build sentence pairs list
+    sentence_pairs = []
+    for chunk in chunks:
+        conf = _estimate_confidence(chunk.text, chunk.translation)
+        sentence_pairs.append({
+            "index": chunk.id,
+            "source": chunk.text,
+            "translated": chunk.translation,
+            "confidence": round(conf, 3)
+        })
 
     # ── Stage 6: NER ─────────────────────────────────────────────────────────
     if enable_ner:
@@ -137,11 +176,12 @@ def run_pipeline(file_path: str | Path, file_type: str, enable_ner: bool = True)
         "sentence_pairs": sentence_pairs,
         "glossary_matches": glossary_matches,
         "glossary_preservation_rate": round(glossary_preservation_rate, 4),
-        "ner_entities": translated_entities,   # Show entities in translated text for dashboard
+        "ner_entities": translated_entities,
         "ner_preservation_rate": round(ner_preservation_rate, 4),
         "confidence_score": confidence_result["score"],
         "confidence_level": confidence_result["level"],
         "confidence_breakdown": confidence_result["breakdown"],
         "processing_time_seconds": processing_time,
+        "reconstructed_doc": reconstructed_doc,
     }
 

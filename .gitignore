@@ -53,3 +53,6 @@ desktop.ini
 # Test files
 backend/test_input.txt
 backend/test_run.py
+
+# Models
+indictrans2-model/
