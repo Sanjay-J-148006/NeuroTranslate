@@ -112,6 +112,7 @@ def unload_nllb():
 def get_indictrans2():
     """Get or load the IndicTrans2 model with Dynamic Quantization on CPU."""
     global _indictrans_model, _indictrans_tokenizer
+    import torch
     _configure_threads()
 
     if _indictrans_model is not None:
@@ -120,10 +121,19 @@ def get_indictrans2():
     # Unload NLLB-200 if loaded to make room in RAM
     unload_nllb()
 
-    app_logger.info("Loading IndicTrans2 model...")
+    import os
+    from config import BASE_DIR
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
+    
+    local_path = str(BASE_DIR.parent / "indictrans2-model")
     model_name = settings.INDICTRANS2_MODEL
+    
+    if os.path.exists(local_path) and os.path.isdir(local_path):
+        model_name = local_path
+        app_logger.info(f"Loading IndicTrans2 from local workspace directory: {model_name}")
+    else:
+        app_logger.info("Local workspace model directory not found. Using Hugging Face path.")
+
     hf_token = settings.HF_TOKEN if settings.HF_TOKEN else None
     if hf_token:
         app_logger.info("Using HF_TOKEN from .env for authenticated download.")
@@ -188,6 +198,7 @@ def unload_indictrans2():
 def get_ner():
     """Get or load the XLM-RoBERTa NER model with dynamic dynamic quantization on CPU."""
     global _ner_pipeline
+    import torch
     _configure_threads()
 
     if _ner_pipeline is not None:
