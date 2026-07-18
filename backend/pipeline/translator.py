@@ -94,7 +94,7 @@ def _translate_batch_indictrans2(sentences: list[str]) -> list[str]:
 
     with torch.no_grad():
         generated_tokens = model.generate(
-            **inputs, use_cache=True, min_length=0, max_length=256, num_beams=1
+            **inputs, use_cache=False, min_length=0, max_length=256, num_beams=1
         )
 
     # Decode and postprocess the full batch at once
@@ -204,7 +204,7 @@ def translate(text: str, language: str) -> dict:
                 ne_out = _translate_batch_nllb(ne_txt, "npi_Deva")
                 model_flags.append("nllb-ct2")
         except Exception as e:
-            app_logger.error(f"Nepali translation failed: {e}. Falling back to NLLB-200.")
+            app_logger.exception("Nepali translation failed. Falling back to NLLB-200.")
             ne_out = _translate_batch_nllb(ne_txt, "npi_Deva")
             model_flags.append("nllb-ct2(fallback)")
 
