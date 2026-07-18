@@ -202,11 +202,11 @@ def translate(text: str, language: str) -> dict:
             else:
                 app_logger.info(f"Translating {len(ne_txt)} Nepali sentences via NLLB-200...")
                 ne_out = _translate_batch_nllb(ne_txt, "npi_Deva")
-                model_flags.append("nllb-ct2")
+                model_flags.append("nllb-200")
         except Exception as e:
             app_logger.exception("Nepali translation failed. Falling back to NLLB-200.")
             ne_out = _translate_batch_nllb(ne_txt, "npi_Deva")
-            model_flags.append("nllb-ct2(fallback)")
+            model_flags.append("nllb-200(fallback)")
 
         for i, out in zip(ne_idx, ne_out):
             translated[i] = out
@@ -216,7 +216,7 @@ def translate(text: str, language: str) -> dict:
         si_out = _translate_batch_nllb(si_txt, "sin_Sinh")
         for i, out in zip(si_idx, si_out):
             translated[i] = out
-        model_flags.append("nllb-ct2")
+        model_flags.append("nllb-200")
 
     for i, t in zip(en_idx, en_txt):
         translated[i] = t
