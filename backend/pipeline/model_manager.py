@@ -177,6 +177,7 @@ def get_indictrans2():
         )
 
     _indictrans_model = model.to(DEVICE)
+    _indictrans_model.eval()  # Disable dropout/batchnorm for faster, accurate CPU inference
     _indictrans_tokenizer = tokenizer
 
     app_logger.info("IndicTrans2 model loaded and ready.")

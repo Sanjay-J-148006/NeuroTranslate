@@ -92,7 +92,7 @@ def _translate_batch_indictrans2(sentences: list[str]) -> list[str]:
         batch, padding="longest", truncation=True, max_length=256, return_tensors="pt"
     ).to(DEVICE)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         generated_tokens = model.generate(
             **inputs, use_cache=False, min_length=0, max_length=256, num_beams=1
         )
